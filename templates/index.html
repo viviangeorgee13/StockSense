@@ -87,8 +87,8 @@
                         <div class="stat-label">AI Models</div>
                     </div>
                     <div class="stat-card accent2">
-                        <div class="stat-val">15</div>
-                        <div class="stat-label">Day Forecast</div>
+                        <div class="stat-val">6</div>
+                        <div class="stat-label">Month Forecast</div>
                     </div>
                 </div>
             </div>
@@ -309,6 +309,17 @@
         </section>
 
     </main>
+
+    <!-- ═══ CHART MODAL ═══ -->
+    <div class="chart-modal hidden" id="chart-modal">
+        <div class="chart-modal-content">
+            <div class="chart-modal-header">
+                <span id="chart-modal-title">Chart</span>
+                <button class="chart-modal-close" onclick="closeChartModal()">✕</button>
+            </div>
+            <div id="chart-modal-container" class="chart-modal-container"></div>
+        </div>
+    </div>
 
     <!-- TOAST -->
     <div class="toast" id="toast"></div>

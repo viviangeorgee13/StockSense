@@ -399,7 +399,7 @@ async function runPrediction() {
         "Running Genetic Algorithm optimisation…",
         "Training deep neural networks…",
         "Evaluating accuracy metrics…",
-        "Forecasting next 15 trading days…"
+        "Forecasting next 6 months (126 trading days)…"
     ];
     let pct = 0, msgIdx = 0;
     const progInterval = setInterval(() => {
@@ -515,7 +515,10 @@ function renderPrediction(data, selected, symbol) {
         panel.style.borderTopColor = color;
         panel.innerHTML = `
             <div class="pred-chart-title" style="color:${color}">
-                <span>${tag} — Next 15 Days</span>
+                <div style="display:flex;align-items:center;">
+                    <span>${tag} — Next 6 Months</span>
+                    <button class="chart-enlarge-btn" onclick="openChartModal('${tag}', '${color}')" title="Enlarge chart">⛶</button>
+                </div>
                 <span style="font-size:10px;color:var(--muted)">RMSE:${acc.rmse} MAE:${acc.mae} DA:${acc.da}%</span>
             </div>
             <div id="pc-${tag}" class="pred-chart-box"></div>
@@ -812,6 +815,92 @@ function renderNewsWithFilter(query) {
     }
 }
 
+/* ── CHART MODAL FUNCTIONS ─────────────────────────────── */
+let modalChart = null;
+
+function openChartModal(tag, color) {
+    if (!predCharts[tag]) return;
+    
+    const modal = document.getElementById("chart-modal");
+    const container = document.getElementById("chart-modal-container");
+    const title = document.getElementById("chart-modal-title");
+    
+    // Set title
+    title.textContent = `${tag} — Next 6 Months`;
+    title.style.color = color;
+    
+    // Clear previous modal chart
+    if (modalChart) { modalChart.remove(); modalChart = null; }
+    
+    // Create container for modal chart
+    container.innerHTML = '<div id="modal-chart-inner" class="chart-modal-inner"></div>';
+    
+    // Create new chart in modal (with larger height)
+    setTimeout(() => {
+        modalChart = LightweightCharts.createChart(
+            document.getElementById("modal-chart-inner"),
+            chartOptions("modal-chart-inner", 600)
+        );
+        
+        // Get the original chart data
+        const originalChart = predCharts[tag];
+        
+        // Get all series from original chart and replicate them
+        const series = originalChart.series();
+        if (series.length > 0) {
+            const originalSeries = series[0];
+            const data = originalSeries.data();
+            
+            const cs = modalChart.addCandlestickSeries({
+                upColor: color,
+                downColor: "#ff4455",
+                borderUpColor: color,
+                borderDownColor: "#ff4455",
+                wickUpColor: color,
+                wickDownColor: "#ff4455"
+            });
+            
+            cs.setData(data);
+        }
+        
+        modalChart.timeScale().fitContent();
+    }, 50);
+    
+    // Show modal
+    modal.classList.remove("hidden");
+    
+    // Close modal on Escape key
+    document.addEventListener("keydown", handleEscapeKey);
+}
+
+function closeChartModal() {
+    const modal = document.getElementById("chart-modal");
+    modal.classList.add("hidden");
+    
+    // Clean up modal chart
+    if (modalChart) { modalChart.remove(); modalChart = null; }
+    
+    // Remove escape key listener
+    document.removeEventListener("keydown", handleEscapeKey);
+}
+
+function handleEscapeKey(e) {
+    if (e.key === "Escape") {
+        closeChartModal();
+    }
+}
+
+// Close modal when clicking outside the content
+document.addEventListener("DOMContentLoaded", () => {
+    const modal = document.getElementById("chart-modal");
+    if (modal) {
+        modal.addEventListener("click", (e) => {
+            if (e.target === modal) {
+                closeChartModal();
+            }
+        });
+    }
+});
 
 
     
