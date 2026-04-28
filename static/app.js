@@ -5,6 +5,7 @@ let cmpChart1 = null;
 let cmpChart2 = null;
 let predCharts = {};
 let predActChart = null;
+let predChartData = {}; // Store prediction data for modal access
 
 // Tracks the currently selected symbol for each searchable selector
 let selectedSymbols = {
@@ -477,6 +478,7 @@ function renderPrediction(data, selected, symbol) {
 
     Object.values(predCharts).forEach(c => c && c.remove());
     predCharts = {};
+    predChartData = {}; // Clear previous chart data
     if (predActChart) { predActChart.remove(); predActChart = null; }
 
     const chartsWrap = document.getElementById("pred-charts");
@@ -531,9 +533,11 @@ function renderPrediction(data, selected, symbol) {
                 borderUpColor: color, borderDownColor: "#ff4455",
                 wickUpColor: color, wickDownColor: "#ff4455"
             });
-            cs.setData(rows.map(r => ({ time: r.date, open: r.open, high: r.high, low: r.low, close: r.close })));
+            const chartData = rows.map(r => ({ time: r.date, open: r.open, high: r.high, low: r.low, close: r.close }));
+            cs.setData(chartData);
             chart.timeScale().fitContent();
             predCharts[tag] = chart;
+            predChartData[tag] = chartData; // Store data for modal access
         }, 60 + idx * 40);
     });
 
@@ -819,7 +823,10 @@ function renderNewsWithFilter(query) {
 let modalChart = null;
 
 function openChartModal(tag, color) {
-    if (!predCharts[tag]) return;
+    if (!predChartData[tag]) {
+        toast("Chart data not available", false);
+        return;
+    }
     
     const modal = document.getElementById("chart-modal");
     const container = document.getElementById("chart-modal-container");
@@ -842,27 +849,19 @@ function openChartModal(tag, color) {
             chartOptions("modal-chart-inner", 600)
         );
         
-        // Get the original chart data
-        const originalChart = predCharts[tag];
+        // Get stored chart data
+        const chartData = predChartData[tag];
         
-        // Get all series from original chart and replicate them
-        const series = originalChart.series();
-        if (series.length > 0) {
-            const originalSeries = series[0];
-            const data = originalSeries.data();
-            
-            const cs = modalChart.addCandlestickSeries({
-                upColor: color,
-                downColor: "#ff4455",
-                borderUpColor: color,
-                borderDownColor: "#ff4455",
-                wickUpColor: color,
-                wickDownColor: "#ff4455"
-            });
-            
-            cs.setData(data);
-        }
+        const cs = modalChart.addCandlestickSeries({
+            upColor: color,
+            downColor: "#ff4455",
+            borderUpColor: color,
+            borderDownColor: "#ff4455",
+            wickUpColor: color,
+            wickDownColor: "#ff4455"
+        });
         
+        cs.setData(chartData);
         modalChart.timeScale().fitContent();
     }, 50);
     
