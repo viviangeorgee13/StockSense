@@ -243,7 +243,7 @@ def run_single_model(tag, df_train, df_eval, df_full,
         hist = list(df_full["Close"].values[-20:])
 
         preds = []
-        for _ in range(15):
+        for _ in range(126):
             inp  = last_state.reshape(1, -1)
             pred = float(model.predict(scaler.transform(inp) if scaler else inp)[0])
             preds.append(pred)
@@ -459,7 +459,7 @@ def predict_stock(symbol):
             else:
                 return jsonify({"error": f"No price data available for '{symbol}'."}), 404
 
-        if len(df) < 60:
+        if len(df) < 200:
             return jsonify({
                 "error": (
                     f"Only {len(df)} days of data found for '{symbol}'. "
@@ -471,8 +471,8 @@ def predict_stock(symbol):
         volatility = float(df["Close"].pct_change().dropna().std())
         avg_volume = int(df["Volume"].mean())
         last_date  = df.index[-1]
-        df_train   = df.iloc[:-15]
-        df_eval    = df.tail(15)
+        df_train   = df.iloc[:-126]
+        df_eval    = df.tail(126)
 
         results  = {}
         accuracy = {}
