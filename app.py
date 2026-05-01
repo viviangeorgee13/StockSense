@@ -551,24 +551,28 @@ def get_news(symbol):
     try:
         # Get company info to filter relevant news
         companies = db_fetchall("SELECT symbol, name FROM companies WHERE symbol = %s", (symbol,))
-        company_name = companies[0]["name"] if companies else ""
+        if not companies:
+            return jsonify([])
+        
+        company_name = companies[0]["name"]
         
         tkr      = yf.Ticker(symbol)
         raw_news = tkr.news
         if not raw_news:
             return jsonify([])
         
-        # Create list of keywords to match (symbol + primary company name)
+        # Create strict keyword matching - must match company's unique identifier
+        # Extract key terms from company name (e.g., "ICICI Bank Ltd" -> ["icici"])
         keywords = [symbol.lower()]
         
-        # Add company name as whole phrase + individual significant words
+        # Add the first significant word from company name (main company identifier)
         if company_name:
-            keywords.append(company_name.lower())
-            # Add words longer than 3 chars to avoid noise like "Inc", "Ltd", "Co"
-            keywords.extend([w.lower() for w in company_name.split() if len(w) > 3])
+            words = [w for w in company_name.split() if len(w) > 2 and w.lower() not in ['ltd', 'inc', 'corp', 'plc', 'nv', 'ag']]
+            if words:
+                keywords.append(words[0].lower())
         
         cleaned  = []
-        for n in raw_news[:20]:  # Check more articles to find relevant ones
+        for n in raw_news[:30]:  # Check more articles
             if "content" in n:
                 c       = n["content"]
                 title   = c.get("title", "")
@@ -581,11 +585,13 @@ def get_news(symbol):
                 summary = n.get("summary", "")
                 pub     = n.get("providerPublishTime", "")
             
-            # Filter: Check if title or summary contains relevant keywords
+            # Strict filter: Title MUST contain symbol or company's primary name
             full_text = (title + " " + summary).lower()
             
-            # Must match symbol or company name to be considered relevant
-            is_relevant = any(keyword in full_text for keyword in keywords)
+            # Match symbol first (most reliable), then company primary word
+            is_relevant = (symbol.lower() in full_text)
+            if not is_relevant and len(keywords) > 1:
+                is_relevant = (keywords[1] in full_text)
             
             if is_relevant and title and link:
                 sentiment = analyze_sentiment(title + " " + summary)
@@ -593,7 +599,7 @@ def get_news(symbol):
                                 "summary": summary, "pubDate": str(pub),
                                 "sentiment": sentiment})
             
-            if len(cleaned) >= 5:  # Stop once we have 5 relevant articles
+            if len(cleaned) >= 5:
                 break
         
         return jsonify(cleaned)
