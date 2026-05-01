@@ -3,6 +3,7 @@ from flask_cors import CORS
 import psycopg2
 import psycopg2.extras
 import os
+import json
 import numpy as np
 import yfinance as yf
 import pandas as pd
@@ -61,7 +62,26 @@ def init_db():
     conn.close()
 
 
+def seed_initial_stocks():
+    path = os.path.join(os.path.dirname(__file__), "stocks.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            stocks_data = json.load(f)
+        for stock in stocks_data:
+            symbol = stock.get("symbol", "").upper().strip()
+            name = stock.get("name", "").strip()
+            if not symbol or not name:
+                continue
+            db_execute(
+                "INSERT INTO companies(symbol, name) VALUES(%s, %s) ON CONFLICT (symbol) DO NOTHING",
+                (symbol, name)
+            )
+    except Exception as e:
+        print(f"Warning: failed to seed initial stocks: {e}")
+
+
 init_db()
+seed_initial_stocks()
 
 
 def analyze_sentiment(text):
