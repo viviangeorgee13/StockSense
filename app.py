@@ -549,12 +549,22 @@ def predict_stock(symbol):
 def get_news(symbol):
     symbol = symbol.upper()
     try:
+        # Get company info to filter relevant news
+        companies = db_fetchall("SELECT symbol, name FROM companies WHERE symbol = %s", (symbol,))
+        company_name = companies[0]["name"] if companies else ""
+        
         tkr      = yf.Ticker(symbol)
         raw_news = tkr.news
         if not raw_news:
             return jsonify([])
+        
+        # Create list of keywords to match (symbol + company name parts)
+        keywords = [symbol]
+        if company_name:
+            keywords.extend(company_name.lower().split())
+        
         cleaned  = []
-        for n in raw_news[:5]:
+        for n in raw_news[:10]:  # Check more articles to find relevant ones
             if "content" in n:
                 c       = n["content"]
                 title   = c.get("title", "")
@@ -566,10 +576,20 @@ def get_news(symbol):
                 link    = n.get("link", "")
                 summary = n.get("summary", "")
                 pub     = n.get("providerPublishTime", "")
-            sentiment = analyze_sentiment(title + " " + summary)
-            cleaned.append({"title": title, "link": link,
-                            "summary": summary, "pubDate": str(pub),
-                            "sentiment": sentiment})
+            
+            # Filter: Check if title or summary contains relevant keywords
+            full_text = (title + " " + summary).lower()
+            is_relevant = any(keyword.lower() in full_text for keyword in keywords)
+            
+            if is_relevant and title and link:
+                sentiment = analyze_sentiment(title + " " + summary)
+                cleaned.append({"title": title, "link": link,
+                                "summary": summary, "pubDate": str(pub),
+                                "sentiment": sentiment})
+            
+            if len(cleaned) >= 5:  # Stop once we have 5 relevant articles
+                break
+        
         return jsonify(cleaned)
     except Exception as e:
         return jsonify({"error": f"Could not fetch news for '{symbol}': {str(e)}"}), 500
