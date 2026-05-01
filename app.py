@@ -558,13 +558,17 @@ def get_news(symbol):
         if not raw_news:
             return jsonify([])
         
-        # Create list of keywords to match (symbol + company name parts)
-        keywords = [symbol]
+        # Create list of keywords to match (symbol + primary company name)
+        keywords = [symbol.lower()]
+        
+        # Add company name as whole phrase + individual significant words
         if company_name:
-            keywords.extend(company_name.lower().split())
+            keywords.append(company_name.lower())
+            # Add words longer than 3 chars to avoid noise like "Inc", "Ltd", "Co"
+            keywords.extend([w.lower() for w in company_name.split() if len(w) > 3])
         
         cleaned  = []
-        for n in raw_news[:10]:  # Check more articles to find relevant ones
+        for n in raw_news[:20]:  # Check more articles to find relevant ones
             if "content" in n:
                 c       = n["content"]
                 title   = c.get("title", "")
@@ -579,7 +583,9 @@ def get_news(symbol):
             
             # Filter: Check if title or summary contains relevant keywords
             full_text = (title + " " + summary).lower()
-            is_relevant = any(keyword.lower() in full_text for keyword in keywords)
+            
+            # Must match symbol or company name to be considered relevant
+            is_relevant = any(keyword in full_text for keyword in keywords)
             
             if is_relevant and title and link:
                 sentiment = analyze_sentiment(title + " " + summary)
