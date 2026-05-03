@@ -52,7 +52,7 @@ function switchPage(name) {
 
     const titles = {
         dashboard: "Dashboard", add: "Add Stock", view: "View Stock",
-        all: "All Stocks", news: "Portfolio News Feed", compare: "Compare Stocks",
+        all: "Tracked Stocks", news: "Portfolio News Feed", compare: "Compare Stocks",
         predict: "AI Prediction Engine", manage: "Manage Stocks"
     };
     document.getElementById("topbar-title").textContent = titles[name] || name;

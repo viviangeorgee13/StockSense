@@ -1,5 +1,7 @@
-from flask import Flask, jsonify, request, render_template
+from flask import Flask, jsonify, request, render_template, redirect, url_for, flash, session
 from flask_cors import CORS
+from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+from werkzeug.security import generate_password_hash, check_password_hash
 import psycopg2
 import psycopg2.extras
 import os
@@ -19,11 +21,39 @@ import re
 warnings.filterwarnings("ignore")
 
 
+class User(UserMixin):
+    def __init__(self, id, username):
+        self.id = id
+        self.username = username
+
+
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
 CORS(app)
+
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = "login"
+
+
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = "login"
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("SELECT id, username FROM users WHERE id = %s", (user_id,))
+    row = cur.fetchone()
+    conn.close()
+    if row:
+        return User(row["id"], row["username"])
+    return None
 
 
 def get_db():
@@ -53,9 +83,23 @@ def init_db():
     conn = get_db()
     cur  = conn.cursor()
     cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL
+        )
+    """)
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS companies (
             symbol TEXT PRIMARY KEY,
             name   TEXT
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_watchlist (
+            user_id INTEGER REFERENCES users(id),
+            symbol TEXT REFERENCES companies(symbol),
+            PRIMARY KEY (user_id, symbol)
         )
     """)
     conn.commit()
@@ -291,18 +335,68 @@ def run_single_model(tag, df_train, df_eval, df_full,
 # ┬────────────────────────────────────────────────────
 # │ ROUTES
 # ┴────────────────────────────────────────────────────
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        username = request.form.get("username")
+        password = request.form.get("password")
+        conn = get_db()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT id, username, password_hash FROM users WHERE username = %s", (username,))
+        user_row = cur.fetchone()
+        conn.close()
+        if user_row and check_password_hash(user_row["password_hash"], password):
+            user = User(user_row["id"], user_row["username"])
+            login_user(user)
+            return redirect(url_for("index"))
+        flash("Invalid username or password")
+    return render_template("login.html")
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "POST":
+        username = request.form.get("username")
+        password = request.form.get("password")
+        if not username or not password:
+            flash("Username and password required")
+            return redirect(url_for("register"))
+        password_hash = generate_password_hash(password)
+        try:
+            db_execute("INSERT INTO users (username, password_hash) VALUES (%s, %s)", (username, password_hash))
+            flash("Registration successful! Please log in.")
+            return redirect(url_for("login"))
+        except psycopg2.IntegrityError:
+            flash("Username already exists")
+    return render_template("register.html")
+
+
+@app.route("/logout")
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for("login"))
+
+
 @app.route("/")
+@login_required
 def index():
     return render_template("index.html")
 
 
 @app.route("/api/stocks", methods=["GET"])
+@login_required
 def get_stocks():
-    rows = db_fetchall("SELECT symbol, name FROM companies")
+    rows = db_fetchall("""
+        SELECT c.symbol, c.name FROM companies c
+        JOIN user_watchlist uw ON c.symbol = uw.symbol
+        WHERE uw.user_id = %s
+    """, (current_user.id,))
     return jsonify([{"symbol": r["symbol"], "name": r["name"]} for r in rows])
 
 
 @app.route("/api/stocks", methods=["POST"])
+@login_required
 def add_stock():
     data   = request.json
     symbol = data.get("symbol", "").upper().strip()
@@ -341,18 +435,24 @@ def add_stock():
     except Exception as e:
         return jsonify({"error": f"Could not verify ticker '{symbol}': {str(e)}"}), 500
     
-    # 🔥 CHECK IF STOCK ALREADY EXISTS
+    # 🔥 CHECK IF STOCK ALREADY EXISTS IN USER'S WATCHLIST
     existing = db_fetchall(
-    "SELECT * FROM companies WHERE symbol = %s",
-    (symbol,))
+    "SELECT * FROM user_watchlist WHERE user_id = %s AND symbol = %s",
+    (current_user.id, symbol))
 
     if existing:
-        return jsonify({"error": "Stock already there"}), 400
+        return jsonify({"error": "Stock already in your watchlist"}), 400
+
+    # First, ensure symbol is in companies table
+    db_execute(
+        "INSERT INTO companies(symbol, name) VALUES(%s,%s) ON CONFLICT (symbol) DO NOTHING",
+        (symbol, name)
+    )
 
     try:
         db_execute(
-            "INSERT INTO companies(symbol, name) VALUES(%s,%s)",
-            (symbol, name)
+            "INSERT INTO user_watchlist(user_id, symbol) VALUES(%s,%s)",
+            (current_user.id, symbol)
         )
         return jsonify({"success": True, "symbol": symbol, "name": name})
     except Exception as e:
@@ -360,18 +460,21 @@ def add_stock():
 
 
 @app.route("/api/stocks/<symbol>", methods=["DELETE"])
+@login_required
 def delete_stock(symbol):
-    db_execute("DELETE FROM companies WHERE symbol=%s", (symbol.upper(),))
+    db_execute("DELETE FROM user_watchlist WHERE user_id=%s AND symbol=%s", (current_user.id, symbol.upper(),))
     return jsonify({"success": True})
 
 
 @app.route("/api/stocks/all", methods=["DELETE"])
+@login_required
 def delete_all_stocks():
-    db_execute("DELETE FROM companies")
+    db_execute("DELETE FROM user_watchlist WHERE user_id=%s", (current_user.id,))
     return jsonify({"success": True})
 
 
 @app.route("/api/view/<symbol>")
+@login_required
 def view_stock(symbol):
     symbol = symbol.upper().strip()
     if not symbol:
@@ -411,6 +514,7 @@ def view_stock(symbol):
 
 
 @app.route("/api/compare")
+@login_required
 def compare_stocks():
     s1 = request.args.get("s1", "").upper()
     s2 = request.args.get("s2", "").upper()
@@ -449,6 +553,7 @@ def compare_stocks():
         return jsonify({"error": f"Comparison failed: {str(e)}"}), 500
 
 
+@login_required
 @app.route("/api/predict/<symbol>")
 def predict_stock(symbol):
     symbol = symbol.upper().strip()
@@ -545,6 +650,7 @@ def predict_stock(symbol):
         return jsonify({"error": f"Prediction failed for '{symbol}': {str(e)}"}), 500
 
 
+@login_required
 @app.route("/api/news/<symbol>")
 def get_news(symbol):
     symbol = symbol.upper()

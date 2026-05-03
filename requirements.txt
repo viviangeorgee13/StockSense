@@ -8,3 +8,5 @@ requests
 beautifulsoup4
 psycopg2-binary
 gunicorn
+Flask-Login==0.6.3
+werkzeug
