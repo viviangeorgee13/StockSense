@@ -16,6 +16,16 @@ let selectedSymbols = {
     del: ""
 };
 
+// Tracks the display name that went with each selection (captured at click-time,
+// since view/compare/predict search live against Yahoo Finance instead of a local list)
+let selectedNames = {
+    view: "",
+    cmpS1: "",
+    cmpS2: "",
+    pred: "",
+    del: ""
+};
+
 const COLORS = { RNN: "#ff6b35", LSTM: "#7b2fff", GRU: "#00d4aa" };
 
 /* ── INIT ──────────────────────────────────────────────── */
@@ -78,19 +88,25 @@ async function loadStocks() {
      - a text input where the user types to filter
      - a dropdown div that shows matching stocks
      - a hidden selected value tracked in selectedSymbols{}
-   
+
+   "del" (Manage Stocks) filters the user's own tracked stocks locally.
+   Every other selector (view / compare / predict) searches live across
+   all of Yahoo Finance as the user types, via /api/search.
+
    Usage: buildSearchSelect("my-wrap-id", "view")
    Then read: selectedSymbols["view"]
 ────────────────────────────────────────────────────────── */
+const searchDebounceTimers = {};
+
 function buildSearchSelect(wrapId, key, placeholder) {
     const wrap = document.getElementById(wrapId);
     if (!wrap) return;
     wrap.classList.add("search-select-wrap");
     wrap.innerHTML = `
-        <input 
-            type="text" 
-            class="ss-input styled-select" 
-            id="ss-input-${key}" 
+        <input
+            type="text"
+            class="ss-input styled-select"
+            id="ss-input-${key}"
             placeholder="${placeholder || '— Type to search stock —'}"
             autocomplete="off"
         />
@@ -101,34 +117,63 @@ function buildSearchSelect(wrapId, key, placeholder) {
     const drop  = document.getElementById(`ss-drop-${key}`);
 
     input.addEventListener("input", () => {
-        const q = input.value.trim().toLowerCase();
-        renderDropdown(key, q);
         drop.classList.remove("hidden");
+        queueDropdown(key, input.value.trim());
     });
 
     input.addEventListener("focus", () => {
-        const q = input.value.trim().toLowerCase();
-        renderDropdown(key, q);
         drop.classList.remove("hidden");
+        queueDropdown(key, input.value.trim());
     });
 }
 
-function renderDropdown(key, query) {
+function queueDropdown(key, query) {
+    clearTimeout(searchDebounceTimers[key]);
+    if (key === "del") {
+        renderDropdown(key, query);
+        return;
+    }
+    searchDebounceTimers[key] = setTimeout(() => renderDropdown(key, query), 300);
+}
+
+async function renderDropdown(key, query) {
     const drop = document.getElementById(`ss-drop-${key}`);
     if (!drop) return;
 
-    const filtered = query
-        ? stocks.filter(s =>
-            s.symbol.toLowerCase().includes(query) ||
-            s.name.toLowerCase().includes(query))
-        : stocks;
+    // "del" (Manage Stocks) only ever offers stocks the user has personally tracked.
+    if (key === "del") {
+        const q = query.toLowerCase();
+        const filtered = q
+            ? stocks.filter(s => s.symbol.toLowerCase().includes(q) || s.name.toLowerCase().includes(q))
+            : stocks;
+        renderDropdownItems(key, drop, filtered, query);
+        return;
+    }
 
-    if (!filtered.length) {
+    // Everywhere else: live search across all of Yahoo Finance as the user types.
+    if (!query) {
+        drop.innerHTML = `<div class="ss-empty">Start typing to search all stocks…</div>`;
+        return;
+    }
+    drop.innerHTML = `<div class="ss-empty">Searching…</div>`;
+    try {
+        const res     = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+        const results = await res.json();
+        const input = document.getElementById(`ss-input-${key}`);
+        if (input && input.value.trim() !== query) return; // stale response, a newer query is in flight
+        renderDropdownItems(key, drop, results, query);
+    } catch (e) {
+        drop.innerHTML = `<div class="ss-empty">Search failed. Please try again.</div>`;
+    }
+}
+
+function renderDropdownItems(key, drop, list, query) {
+    if (!list.length) {
         drop.innerHTML = `<div class="ss-empty">No stocks match "${query}"</div>`;
         return;
     }
 
-    drop.innerHTML = filtered.map(s => {
+    drop.innerHTML = list.map(s => {
         const exchange = s.symbol.endsWith(".NS") ? "NSE"
                        : s.symbol.endsWith(".BO") ? "BSE" : "US";
         const badgeColor = exchange === "NSE" ? "var(--accent)"
@@ -145,6 +190,7 @@ function renderDropdown(key, query) {
 
 function selectStock(key, symbol, name) {
     selectedSymbols[key] = symbol;
+    selectedNames[key] = name;
     const input = document.getElementById(`ss-input-${key}`);
     const drop  = document.getElementById(`ss-drop-${key}`);
     if (input) input.value = `${symbol} — ${name}`;
@@ -153,6 +199,7 @@ function selectStock(key, symbol, name) {
 
 function clearSearchSelect(key) {
     selectedSymbols[key] = "";
+    selectedNames[key] = "";
     const input = document.getElementById(`ss-input-${key}`);
     if (input) input.value = "";
 }
@@ -289,7 +336,7 @@ async function loadView() {
         }
         hide("view-loader"); show("view-result");
         fetchNews(symbol, "view-news");
-        const stock = stocks.find(s => s.symbol === symbol) || { name: symbol };
+        const stock = { name: selectedNames.view || symbol };
         const sign  = data.change >= 0 ? "+" : "";
         const cls   = data.trend === "up" ? "up" : "down";
         const arrow = data.trend === "up" ? "▲" : "▼";
@@ -338,16 +385,16 @@ async function compareStocks() {
         if (data.error) { toast("❌ " + data.error, false); hide("cmp-loader"); return; }
         hide("cmp-loader"); show("cmp-result");
         fetchNews(s1, "cmp-news-1"); fetchNews(s2, "cmp-news-2");
-        renderComparePanel("cmp-chart-1","cmp-label-1","cmp-stats-1",s1,data.stock1,"#00d4aa",cmpChart1,c=>cmpChart1=c);
-        renderComparePanel("cmp-chart-2","cmp-label-2","cmp-stats-2",s2,data.stock2,"#ff6b35",cmpChart2,c=>cmpChart2=c);
+        renderComparePanel("cmp-chart-1","cmp-label-1","cmp-stats-1",s1,selectedNames.cmpS1,data.stock1,"#00d4aa",cmpChart1,c=>cmpChart1=c);
+        renderComparePanel("cmp-chart-2","cmp-label-2","cmp-stats-2",s2,selectedNames.cmpS2,data.stock2,"#ff6b35",cmpChart2,c=>cmpChart2=c);
     } catch (e) {
         hide("cmp-loader");
         toast("❌ Failed to load comparison. Please try again.", false);
     }
 }
 
-function renderComparePanel(chartId, labelId, statsId, symbol, data, color, oldChart, setChart) {
-    const stock = stocks.find(s => s.symbol === symbol) || { name: symbol };
+function renderComparePanel(chartId, labelId, statsId, symbol, name, data, color, oldChart, setChart) {
+    const stock = { name: name || symbol };
     const sign  = data.change >= 0 ? "+" : "";
     const cls   = data.trend === "up" ? "up" : "down";
     const arrow = data.trend === "up" ? "▲" : "▼";
@@ -448,7 +495,7 @@ async function runPrediction() {
 /* ── RENDER PREDICTION ─────────────────────────────────── */
 function renderPrediction(data, selected, symbol) {
     if (!selected || selected.length === 0) { toast("No model results to display", false); return; }
-    const stock = stocks.find(s => s.symbol === symbol) || { name: symbol };
+    const stock = { name: selectedNames.pred || symbol };
 
     const cMap = {
         ALL_UP:        { text: "🧠 All models agree — UPWARD TREND 📈",   cls: "up"    },
@@ -900,6 +947,3 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 });
-
-
-    
