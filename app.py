@@ -402,7 +402,7 @@ def search_stocks():
     if not query:
         return jsonify([])
     try:
-        results = yf.Search(query, max_results=15).quotes
+        results = yf.Search(query, max_results=25, enable_fuzzy_query=True).quotes
         out = []
         for r in results:
             if r.get("quoteType") != "EQUITY":
@@ -688,47 +688,54 @@ def get_news(symbol):
         if not raw_news:
             return jsonify([])
         
-        # Create strict keyword matching - must match company's unique identifier
         # Extract key terms from company name (e.g., "ICICI Bank Ltd" -> ["icici"])
         keywords = [symbol.lower()]
-        
+
         # Add the first significant word from company name (main company identifier)
         if company_name:
             words = [w for w in company_name.split() if len(w) > 2 and w.lower() not in ['ltd', 'inc', 'corp', 'plc', 'nv', 'ag']]
             if words:
                 keywords.append(words[0].lower())
-        
-        cleaned  = []
-        for n in raw_news[:30]:  # Check more articles
+
+        def extract(n):
             if "content" in n:
-                c       = n["content"]
-                title   = c.get("title", "")
-                link    = c.get("clickThroughUrl", {}).get("url", "")
-                summary = c.get("summary", "")
-                pub     = c.get("pubDate", "")
-            else:
-                title   = n.get("title", "")
-                link    = n.get("link", "")
-                summary = n.get("summary", "")
-                pub     = n.get("providerPublishTime", "")
-            
-            # Strict filter: Title MUST contain symbol or company's primary name
-            full_text = (title + " " + summary).lower()
-            
-            # Match symbol first (most reliable), then company primary word
-            is_relevant = (symbol.lower() in full_text)
-            if not is_relevant and len(keywords) > 1:
-                is_relevant = (keywords[1] in full_text)
-            
-            if is_relevant and title and link:
-                sentiment = analyze_sentiment(title + " " + summary)
-                cleaned.append({"title": title, "link": link,
-                                "summary": summary, "pubDate": str(pub),
-                                "sentiment": sentiment})
-            
+                c = n["content"]
+                return (c.get("title", ""), c.get("clickThroughUrl", {}).get("url", ""),
+                        c.get("summary", ""), c.get("pubDate", ""))
+            return (n.get("title", ""), n.get("link", ""),
+                    n.get("summary", ""), n.get("providerPublishTime", ""))
+
+        def build(title, link, summary, pub):
+            return {"title": title, "link": link, "summary": summary,
+                    "pubDate": str(pub), "sentiment": analyze_sentiment(title + " " + summary)}
+
+        articles   = [extract(n) for n in raw_news[:30]]
+        cleaned    = []
+        seen_links = set()
+
+        # Pass 1: title/summary explicitly mentions the symbol or company name
+        for title, link, summary, pub in articles:
+            if not title or not link:
+                continue
+            full_text   = (title + " " + summary).lower()
+            is_relevant = (symbol.lower() in full_text) or (len(keywords) > 1 and keywords[1] in full_text)
+            if is_relevant:
+                cleaned.append(build(title, link, summary, pub))
+                seen_links.add(link)
             if len(cleaned) >= 5:
                 break
-        
+
+        # Pass 2: Yahoo already scopes this feed to the ticker, so if the strict keyword
+        # match left us short, fill remaining slots from the same feed instead of showing nothing.
+        if len(cleaned) < 5:
+            for title, link, summary, pub in articles:
+                if len(cleaned) >= 5:
+                    break
+                if not title or not link or link in seen_links:
+                    continue
+                cleaned.append(build(title, link, summary, pub))
+                seen_links.add(link)
+
         return jsonify(cleaned)
     except Exception as e:
         return jsonify({"error": f"Could not fetch news for '{symbol}': {str(e)}"}), 500
