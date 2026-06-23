@@ -395,6 +395,27 @@ def get_stocks():
     return jsonify([{"symbol": r["symbol"], "name": r["name"]} for r in rows])
 
 
+@app.route("/api/search")
+@login_required
+def search_stocks():
+    query = request.args.get("q", "").strip()
+    if not query:
+        return jsonify([])
+    try:
+        results = yf.Search(query, max_results=15).quotes
+        out = []
+        for r in results:
+            if r.get("quoteType") != "EQUITY":
+                continue
+            symbol = r.get("symbol", "")
+            name   = r.get("shortname") or r.get("longname") or symbol
+            if symbol:
+                out.append({"symbol": symbol, "name": name})
+        return jsonify(out)
+    except Exception:
+        return jsonify([])
+
+
 @app.route("/api/stocks", methods=["POST"])
 @login_required
 def add_stock():
